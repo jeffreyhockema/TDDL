@@ -1,0 +1,4 @@
+# The asset packs are scrambled binary: never touch their line endings
+*.pak binary
+*.png binary
+*.wav binary

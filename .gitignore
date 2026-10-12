@@ -1,0 +1,20 @@
+node_modules/
+*.bak
+*.log
+
+# Local Node.js dev server. The game is static files and runs from any web
+# server, so the server and its package manifest stay out of the repo.
+server.js
+package.json
+package-lock.json
+
+# Third-party art and sound, as the build tools write them. Only the packs that
+# tools/pack_assets.py builds from these are committed (sprites/*.pak and
+# sounds/sounds.pak); see NOTICE.md. The files stay on disk as the packer's input.
+sprites/enemies/*.png
+sprites/player/*.png
+sprites/items/*.png
+sounds/*.wav
+
+# Bytecode the build tools leave behind when they import each other.
+__pycache__/

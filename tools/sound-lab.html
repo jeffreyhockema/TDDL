@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<!--
+  SPDX-License-Identifier: GPL-2.0-or-later
+  Copyright (C) 2026 Jeff Hockema. See LICENSE and NOTICE.md.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDDL Sound Lab</title>
+<style>
+    :root {
+        color-scheme: dark;
+        --bg: #14161a;
+        --panel: #1d2027;
+        --line: #2c313b;
+        --text: #dfe3ea;
+        --dim: #8b93a3;
+        --accent: #d8a657;
+    }
+    body {
+        margin: 0;
+        padding: 28px 20px 60px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    }
+    header, main, .bar { max-width: 1100px; margin-left: auto; margin-right: auto; }
+    header { margin-bottom: 22px; }
+    h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: 0.04em; }
+    p { margin: 0 0 4px; color: var(--dim); }
+    section { margin: 26px 0; }
+    h2 {
+        font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em;
+        color: var(--accent); margin: 0 0 10px; padding-bottom: 6px;
+        border-bottom: 1px solid var(--line);
+    }
+    .grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+    button {
+        font: inherit; text-align: left; cursor: pointer;
+        background: var(--panel); color: var(--text);
+        border: 1px solid var(--line); border-radius: 6px;
+        padding: 10px 12px; transition: background 90ms, border-color 90ms;
+    }
+    button:hover { background: #262a33; border-color: #3b424f; }
+    button:active { background: var(--accent); color: #14161a; }
+    button:disabled { opacity: 0.25; cursor: default; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+    th { color: var(--dim); font-weight: normal; font-size: 12px; }
+    td button { padding: 5px 10px; width: 100%; }
+    td.name { color: var(--text); white-space: nowrap; }
+    .bar {
+        position: sticky; top: 0; z-index: 2; margin-bottom: 8px;
+        display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 8px; padding: 10px 14px;
+    }
+    .bar label { color: var(--dim); display: flex; align-items: center; gap: 8px; }
+    input[type=range] { width: 150px; accent-color: var(--accent); }
+    .state { margin-left: auto; color: var(--dim); }
+    .state b { color: var(--accent); font-weight: normal; }
+    kbd {
+        background: #262a33; border: 1px solid var(--line); border-radius: 4px;
+        padding: 1px 5px; font-size: 12px;
+    }
+</style>
+</head>
+<body>
+<header>
+    <h1>TDDL Sound Lab</h1>
+    <p>Every sound the game can make, on demand. Serve the project (<kbd>npm start</kbd>) and open
+       <kbd>/tools/sound-lab.html</kbd> — opening the file directly will not work, because ES modules need HTTP.</p>
+    <p>Click anything once to start audio. The samples are the Doom Sound Bulb pack (see <kbd>sounds/README.md</kbd>).
+       The listener slider moves you left or right of a sound placed at the centre, to hear the panning and falloff.</p>
+</header>
+
+<div class="bar">
+    <label>Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="0.9"></label>
+    <label><input id="mute" type="checkbox"> Mute</label>
+    <label>Listener <input id="listener" type="range" min="-800" max="800" step="10" value="0"> <span id="listenerLabel">at the sound</span></label>
+    <button id="stress" style="padding:6px 10px">Firefight stress test</button>
+    <span class="state">samples <b id="samples">0</b> · state <b id="state">idle</b> · voices <b id="voices">0</b></span>
+</div>
+
+<main id="board"></main>
+
+<script type="module">
+import * as audio from '../js/audio-system.js';
+
+// A stand-in for the game state so placed sounds have a listener to be placed
+// against. The sound sits at the origin; the slider moves the player.
+window.gameState = { player: { x: 0, y: 0 } };
+const HERE = { x: 0, y: 0 };
+
+/**
+ * Repeats a sound, for judging rapid fire as a sequence rather than a shot.
+ *
+ * @param {Function} fn - Sound to play
+ * @param {number} count - How many times
+ * @param {number} gap - Milliseconds between
+ * @returns {Function}
+ */
+function burst(fn, count, gap) {
+    return () => {
+        for (let i = 0; i < count; i++) setTimeout(fn, i * gap);
+    };
+}
+
+const GROUPS = [
+    ['Player weapons', [
+        ['Knife swing', () => audio.playShootSound('Knife')],
+        ['Knife hit', () => audio.playMeleeHitSound()],
+        ['Pistol', () => audio.playShootSound('Pistol')],
+        ['Shotgun', () => audio.playShootSound('Shotgun')],
+        ['Chaingun (rifle burst)', burst(() => audio.playShootSound('Rifle'), 12, 66)],
+        ['Rocket Launcher', () => audio.playShootSound('Rocket Launcher')],
+        ['Plasma Gun (burst)', burst(() => audio.playShootSound('Plasma Gun'), 8, 90)],
+        ['BFG', () => audio.playShootSound('BFG')],
+        ['Dry fire', () => audio.playEmptyGunSound()],
+        ['Weapon switch', () => audio.playWeaponSwitchSound()],
+    ]],
+    ['Impacts', [
+        ['Player takes damage', () => audio.playPlayerHitSound()],
+        ['Rocket explosion', () => audio.playRocketExplosionSound(HERE)],
+        ['Barrel explosion', () => audio.playBarrelExplosionSound(HERE)],
+        ['BFG impact', () => audio.playBFGImpactSound(HERE)],
+        ['Enemy rifle', () => audio.playEnemyGunSound('rifle', HERE)],
+        ['Enemy shotgun', () => audio.playEnemyGunSound('shotgun', HERE)],
+        ['Enemy chaingun', () => audio.playEnemyGunSound('chaingun', HERE)],
+        ['Enemy SS gun', () => audio.playEnemyGunSound('ss', HERE)],
+        ['Corpse raised', () => audio.playResurrectSound(HERE)],
+    ]],
+    ['Items, doors and switches', [
+        ['Item pickup', () => audio.playHealthPickupSound()],
+        ['Weapon pickup', () => audio.playWeaponPickupSound()],
+        ['Powerup', () => audio.playPowerupSound()],
+        ['Door opens', () => audio.playDoorOpenSound(HERE)],
+        ['Door closes', () => audio.playDoorCloseSound(HERE)],
+        ['Switch', () => audio.playSwitchSound(HERE)],
+        ['Hidden wall slides', () => audio.playSecretDoorOpenSound(HERE)],
+        ['Teleport', () => audio.playTeleportSound(HERE)],
+        ['Locked / no way', () => audio.playErrorSound()],
+    ]],
+    ['UI and stingers', [
+        ['Menu select', () => audio.playUIClickSound()],
+        ['Menu cursor', () => audio.playUIHoverSound()],
+        ['Low health', () => audio.playLowHealthWarning()],
+        ['Level complete', () => audio.playLevelCompleteSound()],
+        ['Game over', () => audio.playGameOverSound()],
+        ['Ambient swell', () => audio.playAmbientSound()],
+        ['Menu music', () => audio.startMenuMusic()],
+        ['Stop menu music', () => audio.stopMenuMusic()],
+    ]],
+];
+
+const MONSTER_ROLES = [
+    ['sight', (v) => audio.playEnemySightSound(v, HERE)],
+    ['active', (v) => audio.playEnemyActiveSound(v, HERE)],
+    ['pain', (v) => audio.playEnemyPainSound(v, HERE)],
+    ['attack', (v) => audio.playEnemyShootSound(v, HERE)],
+    ['melee', (v) => audio.playEnemyMeleeSound(v, HERE)],
+    ['windup', (v) => audio.playEnemyWindupSound(v, HERE)],
+    ['step', (v) => audio.playEnemyStepSound(v, HERE, audio.MONSTER_VOICES[v].stepEvery)],
+    ['death', (v) => audio.playEnemyDestroySound(v, HERE)],
+];
+
+const board = document.getElementById('board');
+
+/** Starts audio on the first gesture, then plays. */
+async function play(fn) {
+    await audio.ensureAudioAndSynths();
+    fn();
+}
+
+for (const [title, entries] of GROUPS) {
+    const section = document.createElement('section');
+    const heading = document.createElement('h2');
+    heading.textContent = title;
+    section.appendChild(heading);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const [label, fn] of entries) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.addEventListener('pointerdown', () => play(fn));
+        grid.appendChild(button);
+    }
+    section.appendChild(grid);
+    board.appendChild(section);
+}
+
+// The bestiary: one row per voice, one column per role.
+{
+    const section = document.createElement('section');
+    const heading = document.createElement('h2');
+    heading.textContent = 'Monsters';
+    section.appendChild(heading);
+
+    const table = document.createElement('table');
+    const head = table.insertRow();
+    head.appendChild(document.createElement('th')).textContent = 'voice';
+    for (const [role] of MONSTER_ROLES) head.appendChild(document.createElement('th')).textContent = role;
+
+    for (const [name, voice] of Object.entries(audio.MONSTER_VOICES)) {
+        const row = table.insertRow();
+        const cell = row.insertCell();
+        cell.className = 'name';
+        cell.textContent = name + (voice.full ? ' (full volume)' : '');
+
+        for (const [role, fn] of MONSTER_ROLES) {
+            const button = document.createElement('button');
+            const has = role === 'attack' ? true : !!voice[role];
+            const lumps = [].concat(voice[role] || (role === 'attack' ? 'dsfirsht' : []));
+            button.textContent = has ? lumps.map(l => l.replace(/^ds/, '')).join('/') : '—';
+            button.disabled = !has;
+            button.addEventListener('pointerdown', () => play(() => fn(name)));
+            row.insertCell().appendChild(button);
+        }
+    }
+    section.appendChild(table);
+    board.appendChild(section);
+}
+
+// Mix controls.
+document.getElementById('volume').addEventListener('input', (event) => {
+    audio.setMasterVolume(Number(event.target.value));
+});
+document.getElementById('mute').addEventListener('change', (event) => {
+    audio.setMuted(event.target.checked);
+});
+document.getElementById('listener').addEventListener('input', (event) => {
+    const x = Number(event.target.value);
+    window.gameState.player.x = x;
+    const tiles = Math.abs(x) / 40;
+    document.getElementById('listenerLabel').textContent =
+        x === 0 ? 'at the sound' : `${tiles.toFixed(1)} tiles ${x < 0 ? 'left of' : 'right of'} the sound`;
+});
+
+// Stress test: what a bad moment in a firefight actually sounds like, and proof
+// the voice budget holds under it.
+document.getElementById('stress').addEventListener('click', () => play(() => {
+    const voices = Object.keys(audio.MONSTER_VOICES);
+    for (let i = 0; i < 60; i++) {
+        setTimeout(() => {
+            audio.playShootSound('Rifle');
+            if (i % 4 === 0) audio.playEnemyGunSound(i % 8 ? 'rifle' : 'shotgun', HERE);
+            if (i % 6 === 0) audio.playEnemyShootSound('imp', HERE);
+            if (i % 7 === 0) audio.playEnemyPainSound(voices[i % voices.length], HERE);
+            if (i % 9 === 0) audio.playEnemyDestroySound(voices[i % voices.length], HERE);
+            if (i % 20 === 0) audio.playBarrelExplosionSound(HERE);
+        }, i * 70);
+    }
+}));
+
+// Live engine readout.
+setInterval(() => {
+    const stats = audio.engineStats();
+    const sounds = audio.soundStats();
+    document.getElementById('samples').textContent = `${sounds.loaded}/${sounds.total}`;
+    document.getElementById('state').textContent = stats.state;
+    document.getElementById('voices').textContent = `${stats.voices}/${stats.maxVoices}`;
+}, 100);
+
+audio.initializeAudio();
+</script>
+</body>
+</html>
